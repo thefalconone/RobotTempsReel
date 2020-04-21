@@ -174,7 +174,12 @@ void Tasks::Run() {
 /**
  * @brief Arrêt des tâches
  */
-void Tasks::Stop() {
+void Tasks::Stop() {                                                                            //fonctionnalité 6 a finir
+    /*En cas de perte de communication entre le superviseur et moniteur, il faut
+    stopper le robot, la communication avec le robot, fermer le serveur et déconnecter la caméra afin
+    de revenir dans le même état qu’au démarrage du superviseur.
+     */
+
     monitor.Close();
     robot.Close();
 }
@@ -201,7 +206,7 @@ void Tasks::ServerTask(void *arg) {
     /* The task server starts here                                                        */
     /**************************************************************************************/
     rt_mutex_acquire(&mutex_monitor, TM_INFINITE);
-    status = monitor.Open(SERVER_PORT);
+    status = monitor.Open(SERVER_PORT);                                                         //fonctionnalité 1
     rt_mutex_release(&mutex_monitor);
 
     cout << "Open server on port " << (SERVER_PORT) << " (" << status << ")" << endl;
@@ -209,7 +214,7 @@ void Tasks::ServerTask(void *arg) {
     if (status < 0) throw std::runtime_error {
         "Unable to start server on port " + std::to_string(SERVER_PORT)
     };
-    monitor.AcceptClient(); // Wait the monitor client
+    monitor.AcceptClient(); // Wait the monitor client                                          //fonctionnalité 2
     cout << "Rock'n'Roll baby, client accepted!" << endl << flush;
     rt_sem_broadcast(&sem_serverOk);
 }
@@ -234,10 +239,12 @@ void Tasks::SendToMonTask(void* arg) {
         msg = ReadInQueue(&q_messageToMon);
         cout << "Send msg to mon: " << msg->ToString() << endl << flush;
         rt_mutex_acquire(&mutex_monitor, TM_INFINITE);
-        monitor.Write(msg); // The message is deleted with the Write
+        monitor.Write(msg); // The message is deleted with the Write                                                         //fonctionnalité 4
         rt_mutex_release(&mutex_monitor);
     }
 }
+
+int watchdog = 0;
 
 /**
  * @brief Thread receiving data from monitor.
@@ -256,18 +263,20 @@ void Tasks::ReceiveFromMonTask(void *arg) {
     cout << "Received message from monitor activated" << endl << flush;
 
     while (1) {
-        msgRcv = monitor.Read();
+        msgRcv = monitor.Read();                                                                               //fonctionnalité 3
         cout << "Rcv <= " << msgRcv->ToString() << endl << flush;
 
-        if (msgRcv->CompareID(MESSAGE_MONITOR_LOST)) {
+        if (msgRcv->CompareID(MESSAGE_MONITOR_LOST)) {                                                         //fonctionnalité 5
             delete(msgRcv);
             cerr << "MESSAGE_MONITOR_LOST: " << strerror(-1) << endl << flush;//--------------------------------------------
             exit(-1);
         } else if (msgRcv->CompareID(MESSAGE_ROBOT_COM_OPEN)) {
             rt_sem_v(&sem_openComRobot);
         } else if (msgRcv->CompareID(MESSAGE_ROBOT_START_WITHOUT_WD)) {
+            watchdog=0;
             rt_sem_v(&sem_startRobot);
         } else if (msgRcv->CompareID(MESSAGE_ROBOT_START_WITH_WD)) {//--------------------------------------------WATCHDOG, ROBOT COM
+            watchdog=1;
             rt_sem_v(&sem_startRobot);
         } else if (msgRcv->CompareID(MESSAGE_ROBOT_GO_FORWARD) ||
                 msgRcv->CompareID(MESSAGE_ROBOT_GO_BACKWARD) ||
@@ -301,7 +310,7 @@ void Tasks::OpenComRobot(void *arg) {
         rt_sem_p(&sem_openComRobot, TM_INFINITE);
         cout << "Open serial com (";
         rt_mutex_acquire(&mutex_robot, TM_INFINITE);
-        status = robot.Open();
+        status = robot.Open();                                                                              //fonctionnalite 7 a finir
         rt_mutex_release(&mutex_robot);
         cout << status;
         cout << ")" << endl << flush;
@@ -309,7 +318,7 @@ void Tasks::OpenComRobot(void *arg) {
         Message * msgSend;
         if (status < 0) {
             msgSend = new Message(MESSAGE_ANSWER_NACK);
-            rt_mutex_acquire(&mutex_robot, TM_INFINITE);//----------------------------------------------------------------
+            rt_mutex_acquire(&mutex_robot, TM_INFINITE);
             robot.Stop();
             rt_mutex_release(&mutex_robot);
             //camera.Stop();
@@ -328,17 +337,25 @@ void Tasks::StartRobotTask(void *arg) {
     cout << "Start " << __PRETTY_FUNCTION__ << endl << flush;
     // Synchronization barrier (waiting that all tasks are starting)
     rt_sem_p(&sem_barrier, TM_INFINITE);
+    int compteurErr=0;
     
     /**************************************************************************************/
     /* The task startRobot starts here                                                    */
     /**************************************************************************************/
-    while (1) {
+    while (compteurErr<3) {
 
         Message * msgSend;
         rt_sem_p(&sem_startRobot, TM_INFINITE);
-        cout << "Start robot without watchdog (";
+        
         rt_mutex_acquire(&mutex_robot, TM_INFINITE);
-        msgSend = robot.Write(robot.StartWithoutWD());
+        if(watchdog){//                                                                            fonctionnalité 10
+            cout << "Start robot with watchdog (";
+            msgSend = robot.Write(robot.StartWithWD());
+        }
+        else{
+            cout << "Start robot without watchdog (";
+            msgSend = robot.Write(robot.StartWithoutWD());
+        }
         rt_mutex_release(&mutex_robot);
         cout << msgSend->GetID();
         cout << ")" << endl;
@@ -351,7 +368,13 @@ void Tasks::StartRobotTask(void *arg) {
             robotStarted = 1;
             rt_mutex_release(&mutex_robotStarted);
         }
+        else{
+            compteurErr++;//                                                                            fonctionnalité 8
+        }
     }
+    //envoie de l'erreur de com robot au moniteur
+    MessageString msgSend = MessageString(MESSAGE_ANSWER_ROBOT_ERROR);//                                fonctionnalité 9
+    WriteInQueue(&q_messageToMon, msgSend);
 }
 
 /**
@@ -385,16 +408,19 @@ void Tasks::MoveTask(void *arg) {
             cout << " move: " << cpMove;
             
             rt_mutex_acquire(&mutex_robot, TM_INFINITE);
-            Message msg = robot.Write(new Message((MessageID)cpMove));
-            if(msg=MESSAGE_ANSWER_NACK || msg=MESSAGE_ANSWER_ROBOT_TIMEOUT || msg=MESSAGE_ANSWER_ROBOT_ERROR){//----------------------8
+            Message msg = robot.Write(new Message((MessageID)cpMove));//                                               fonctionnalité 12
+            if(msg=MESSAGE_ANSWER_NACK || msg=MESSAGE_ANSWER_ROBOT_TIMEOUT || msg=MESSAGE_ANSWER_ROBOT_ERROR){//       fonctionnalité 8
                 compteurErr++;
+            }
+            else if (compteurErr>0){
+                compteurErr--;
             }
             rt_mutex_release(&mutex_robot);
         }
         cout << endl << flush;
     }
     //envoie de l'erreur de com robot au moniteur
-    MessageString msgSend = MessageString(MESSAGE_ANSWER_ROBOT_ERROR);//---------------------------------------------------------------9
+    MessageString msgSend = MessageString(MESSAGE_ANSWER_ROBOT_ERROR);//                                              fonctionnalité 9
     WriteInQueue(&q_messageToMon, msgSend);
 }
 
