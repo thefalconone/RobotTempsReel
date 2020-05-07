@@ -409,7 +409,7 @@ void Tasks::MoveTask(void *arg) {
             
             rt_mutex_acquire(&mutex_robot, TM_INFINITE);
             Message msg = robot.Write(new Message((MessageID)cpMove));//                                               fonctionnalité 12
-            if(msg=MESSAGE_ANSWER_NACK || msg=MESSAGE_ANSWER_ROBOT_TIMEOUT || msg=MESSAGE_ANSWER_ROBOT_ERROR){//       fonctionnalité 8
+            if(msg==MESSAGE_ANSWER_NACK || msg==MESSAGE_ANSWER_ROBOT_TIMEOUT || msg==MESSAGE_ANSWER_ROBOT_ERROR){//       fonctionnalité 8
                 compteurErr++;
             }
             else if (compteurErr>0){
@@ -455,4 +455,5 @@ Message *Tasks::ReadInQueue(RT_QUEUE *queue) {
 
     return msg;
 }
+
 
