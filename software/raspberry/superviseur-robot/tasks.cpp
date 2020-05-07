@@ -413,7 +413,7 @@ void Tasks::MoveTask(void *arg) {
                 compteurErr++;
             }
             else if (compteurErr>0){
-                compteurErr--;
+                compteurErr = 0;
             }
             rt_mutex_release(&mutex_robot);
         }
